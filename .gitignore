@@ -1,0 +1,12 @@
+*.pyc
+
+# Jupyter Notebook
+*.ipynb_checkpoints
+
+# osx generated files
+.DS_Store
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+
+
