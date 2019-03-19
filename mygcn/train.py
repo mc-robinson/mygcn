@@ -31,6 +31,11 @@ def train_epoch(model:nn.Module, train_dl:DataLoader,
         bg.set_e_initializer(dgl.init.zero_initializer)
         bg.set_n_initializer(dgl.init.zero_initializer)
 
+        # need to handle special case for regression with nn.MSELoss()
+        if model(bg).shape[1] == 1:
+            label = label.reshape(-1,1)
+            # print(label)
+
         loss = loss_func(model(bg), label)
         train_loss += loss.detach().item()
         
@@ -38,7 +43,8 @@ def train_epoch(model:nn.Module, train_dl:DataLoader,
         opt.step()
         opt.zero_grad()
     
-    train_loss /= (iteration + 1)
+    # train_loss /= (iteration + 1) # per batch loss
+    train_loss /= len(train_dl.dataset) # per sample loss
     return train_loss
 
 def validate(model:nn.Module, valid_dl:DataLoader, loss_func:Callable) -> float:
@@ -49,14 +55,22 @@ def validate(model:nn.Module, valid_dl:DataLoader, loss_func:Callable) -> float:
         valid_loss = 0
         for (bg, label) in valid_dl:
 
+            ### FIX THESE SHAPES TOO ###
+
             bg.set_e_initializer(dgl.init.zero_initializer)
             bg.set_n_initializer(dgl.init.zero_initializer)
+
+            # need to handle special case for regression with nn.MSELoss()
+            if model(bg).shape[1] == 1:
+                label = label.reshape(-1,1)
 
             loss = loss_func(model(bg), label)
             valid_loss += loss.detach().item()
 
         # valid_loss = sum(loss_func(model(bg), label) for bg, label in valid_dl)
-    return valid_loss/len(valid_dl)
+
+    # return valid_loss/len(valid_dl) # this gives per batch loss
+    return valid_loss/len(valid_dl.dataset) # this gives per sample loss
 
 def fit(model:nn.Module, train_dl:DataLoader, valid_dl:DataLoader,
         loss_func:Callable, opt:optim.Optimizer, n_epochs:int,
@@ -79,11 +93,17 @@ def fit(model:nn.Module, train_dl:DataLoader, valid_dl:DataLoader,
         else:
             valid_loss = 'N/A'
 
-        if epoch % (n_epochs//10) == 0:
+        if n_epochs > 10:
+            if epoch % (n_epochs//10) == 0:
+                print(
+                    f'Epoch {epoch}, train loss {train_loss:.4f}',
+                    f'valid loss {valid_loss}'
+                )  
+        else:
             print(
-                f'Epoch {epoch}, train loss {train_loss:.4f}',
-                f'valid loss {valid_loss}'
-            )    
+                    f'Epoch {epoch}, train loss {train_loss:.4f}',
+                    f'valid loss {valid_loss}'
+            )  
 
 
 
