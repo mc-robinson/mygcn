@@ -20,6 +20,10 @@ from sklearn.metrics import confusion_matrix
 from sklearn.metrics import roc_auc_score, auc, roc_curve
 from sklearn.preprocessing import label_binarize
 
+from sklearn.metrics import r2_score
+from sklearn.metrics import mean_squared_error
+from sklearn.metrics import mean_absolute_error
+
 # imports for typing
 from numbers import Number
 from typing import Any, AnyStr, Callable, Collection, Dict, Hashable, \
@@ -93,7 +97,43 @@ def evaluate_classifier(model:nn.Module, test_dl:DataLoader,
         for key in bs_roc_auc:
             print(key,' : ', bs_roc_auc[key])
 
-def evaluate_dc_calssifier(model, testset,
+def evaluate_regressor(model:nn.Module, test_dl:DataLoader,
+                        loss_func:Callable) -> None:
+    "evaluate a pytorch graph model for regression"
+
+    y_pred = []
+    y_true = []
+    test_loss = 0
+    for bg, labels in test_dl:
+        model.eval()
+
+        bg.set_e_initializer(dgl.init.zero_initializer)
+        bg.set_n_initializer(dgl.init.zero_initializer)
+
+        if model(bg).shape[1] == 1:
+            labels = labels.reshape(-1,1)
+
+        loss = loss_func(model(bg), labels)
+        test_loss += loss.detach().item()
+
+        y_pred += list(model(bg).detach().numpy().reshape(-1,))
+        y_true += list(np.array(labels.reshape(-1,)))
+        
+    print('test_loss: ',test_loss/len(test_dl.dataset))
+    print('***')
+
+    print('RMSE: ', np.sqrt(mean_squared_error(y_true, y_pred)))
+    print('RMSE CI: ', RMSE_CI(y_true, y_pred))
+    print('***')
+
+    print('MAE: ', mean_absolute_error(y_true, y_pred))
+    print('MAE CI: ', MAE_CI(y_true, y_pred))
+    print('***')
+
+    print('R^2: ', r2_score(y_true, y_pred))
+    print('R^2 CI: ', R2_CI(y_true, y_pred))
+
+def evaluate_dc_classifier(model, testset,
                            classes:List[int]=[0,1]) -> None:
     "evaluate a DeepChem `model` for classification on a dc `dataset`: testset"
 
@@ -163,6 +203,70 @@ def bs_roc_auc_score(y_true:List, y_prob:List, n_boostraps:int=1000):
     confidence_upper = sorted_scores[int(0.95 * len(sorted_scores))]
     return [confidence_lower, confidence_upper]
 
+def R2_CI(y_true:List, y_pred:List):
+    "code using the Fischer transform to compute R2 CI"
 
+    r2 = r2_score(y_true, y_pred)
+    r = np.sqrt(r2)
+    N = len(y_true)
 
+    def pearson_confidence(r, num, interval=0.95):
+        from scipy.stats import pearsonr
+        from scipy.stats import norm
+        import math
+        """
+        FROM Pat Walters!!! (https://github.com/PatWalters/metk)
+        Calculate upper and lower 95% CI for a Pearson r (not R**2)
+        Inspired by https://stats.stackexchange.com/questions/18887
+        :param r: Pearson's R
+        :param num: number of data points
+        :param interval: confidence interval (0-1.0)
+        :return: lower bound, upper bound
+        """
+        stderr = 1.0 / math.sqrt(num - 3)
+        z_score = norm.ppf(interval)
+        delta = z_score * stderr
+        lower = math.tanh(math.atanh(r) - delta)
+        upper = math.tanh(math.atanh(r) + delta)
+        return lower, upper
+
+    lower_CI, upper_CI = [x**2 for x in pearson_confidence(r,N)]
+    return lower_CI, upper_CI
+
+def RMSE_CI(y_true:List, y_pred:List):
+    "Computes the RMSE CI using the formula from Nicholls (2014)"
+    rmse = np.sqrt(mean_squared_error(y_true, y_pred))
+    N = len(y_pred)
+
+    s2 = rmse**2
+    lower_limit = s2 - 1.96*s2*np.sqrt(2/(N-1))
+    upper_limit = s2 + 1.96*s2*np.sqrt(2/(N-1))
+    return np.sqrt(lower_limit), np.sqrt(upper_limit)
+
+def MAE_CI(y_true:List, y_pred:List, n_boostraps:int=1000):
+    "code to bootstrap the MAE score: adapted from Ogrisel's AUC code"
+
+    n_bootstraps = 1000
+    rng_seed = 42  # control reproducibility
+    bootstrapped_scores = []
+
+    rng = np.random.RandomState(rng_seed)
+    for i in range(n_bootstraps):
+        # bootstrap by sampling with replacement on the prediction indices
+        indices = rng.random_integers(0, len(y_pred) - 1, len(y_pred))
+        y_true = np.array(y_true)
+        y_pred = np.array(y_pred)
+
+        score = mean_absolute_error(y_true[indices], y_pred[indices])
+        bootstrapped_scores.append(score)
+
+    sorted_scores = np.array(bootstrapped_scores)
+    sorted_scores.sort()
+
+    # Computing the lower and upper bound of the 90% confidence interval
+    # You can change the bounds percentiles to 0.025 and 0.975 to get
+    # a 95% confidence interval instead.
+    confidence_lower = sorted_scores[int(0.05 * len(sorted_scores))]
+    confidence_upper = sorted_scores[int(0.95 * len(sorted_scores))]
+    return [confidence_lower, confidence_upper]
 
